@@ -22,7 +22,7 @@ PointerAlignment: Middle
 
 SpaceAfterTemplateKeyword: false
 
-ColumnLimit: 140
+ColumnLimit: 100
 
 SortIncludes: false
 

@@ -1,6 +1,7 @@
 # Diffcoal
 
 # Environment Setup
+- verfied at platform x64 ubuntu20/22
 ```bash
 conda create -n diffcoal python=3.10 -c conda-forge -y
 conda activate diffcoal
