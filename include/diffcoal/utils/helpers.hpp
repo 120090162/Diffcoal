@@ -2,10 +2,13 @@
 #define __diffcoal_utils_helpers_hpp__
 
 #include <torch/torch.h>
+#include <open3d/Open3D.h>
 #include <vector>
 #include <iostream>
 #include <cmath>
 #include <string>
+
+#include "diffcoal/utils/logger.hpp"
 
 namespace diffcoal
 {
@@ -124,7 +127,7 @@ namespace diffcoal
     {
         auto rho = xi.index({"...", Slice(None, 3)});
         auto phi = xi.index({"...", Slice(3, None)});
-        auto skew_rho = skew_symmetric(rho);
+        auto skew_rho = skewSymmetric(rho);
 
         auto G_body = torch::zeros_like(A);
         G_body.index_put_({"...", Slice(None, 3), Slice(None, 3)}, skew_rho);
@@ -135,7 +138,7 @@ namespace diffcoal
 
     torch::Tensor torchMatrixGradToSe3(const torch::Tensor & A, const torch::Tensor & A_grad)
     {
-        auto G_body = torch::linalg::solve(A.detach(), A_grad);
+        auto G_body = torch::linalg::solve(A.detach(), A_grad, true);
 
         auto phi = G_body.index({"...", Slice(None, 3), 3});
         auto R_block = G_body.index({"...", Slice(None, 3), Slice(None, 3)});
@@ -261,6 +264,126 @@ namespace diffcoal
         auto xi = torch::cat({rho / step_r, phi / step_t}, -1);
 
         return xi;
+    }
+
+    torch::Tensor adjointFromTransform(const torch::Tensor & T)
+    {
+        TORCH_CHECK(
+            T.size(-1) == 4 && T.size(-2) == 4, "Input must be (...,4,4) transform matrices");
+
+        auto R = T.index({"...", Slice(None, 3), Slice(None, 3)});
+        auto p = T.index({"...", Slice(None, 3), 3});
+
+        auto px = skewSymmetric(p);
+
+        // Build Adjoint matrix
+        std::vector<int64_t> ad_shape(T.sizes().begin(), T.sizes().end() - 2);
+        ad_shape.push_back(6);
+        ad_shape.push_back(6);
+
+        auto Ad =
+            torch::zeros(ad_shape, torch::TensorOptions().device(T.device()).dtype(T.dtype()));
+
+        Ad.index_put_({"...", Slice(None, 3), Slice(None, 3)}, R);
+        Ad.index_put_({"...", Slice(3, None), Slice(None, 3)}, torch::matmul(px, R));
+        Ad.index_put_({"...", Slice(3, None), Slice(3, None)}, R);
+
+        return Ad;
+    }
+
+    torch::Tensor eqvGrad(
+        const torch::Tensor & T1,
+        const torch::Tensor & T2,
+        const torch::Tensor & grad_T1,
+        double step_r = 1.0,
+        double step_t = 1.0)
+    {
+        auto se3_T1 = torchMatrixGradToSe3(T1, grad_T1);
+        se3_T1.index_put_({"...", Slice(None, 3)}, se3_T1.index({"...", Slice(None, 3)}) * step_r);
+        se3_T1.index_put_({"...", Slice(3, None)}, se3_T1.index({"...", Slice(3, None)}) * step_t);
+
+        auto T_rel = torch::linalg::solve(T2, T1, true);
+
+        auto se3_T2 = torch::einsum("...ij, ...j-> ...i", {adjointFromTransform(T_rel), se3_T1});
+
+        se3_T2.index_put_({"...", Slice(None, 3)}, se3_T2.index({"...", Slice(None, 3)}) / step_r);
+        se3_T2.index_put_({"...", Slice(3, None)}, se3_T2.index({"...", Slice(3, None)}) / step_t);
+
+        auto grad_T2 = torchSe3ToMatrixGrad(T2, -se3_T2);
+
+        return grad_T2;
+    }
+
+    static bool _local_sample_warn_once = false;
+
+    torch::Tensor localSampleWDthre(
+        torch::Tensor global_sample,
+        torch::Tensor target_point,
+        double dist_thre,
+        double min_thre,
+        int64_t n_local,
+        const std::string & sample_strategy)
+    {
+        auto dist = torch::norm(
+            global_sample - global_sample.index({Slice(), Slice(-1, None)}), 2, -1); // (B, S)
+
+        torch::Tensor valid;
+        auto min_thre_tensor = torch::tensor(min_thre, global_sample.options());
+        auto dist_thre_tensor = torch::tensor(dist_thre, global_sample.options());
+
+        if (sample_strategy == "adp")
+        {
+            auto dist2 =
+                torch::norm(global_sample.index({Slice(), -1}) - target_point, 2, -1); // (B,)
+
+            valid = dist < torch::maximum(2 * dist2, min_thre_tensor).unsqueeze(-1); // (B, S)
+        }
+        else if (sample_strategy == "fix")
+        {
+            valid =
+                dist < torch::maximum(dist_thre_tensor, min_thre_tensor).unsqueeze(-1); // (B, S)
+        }
+        else
+        {
+            throw std::invalid_argument(
+                "Unknown sample strategy " + sample_strategy + ". Available: 'adp', 'fix'.");
+        }
+
+        // If buggy batches found, re-sample with adjusted threshold
+        auto valid_sum = valid.sum(-1);
+        int64_t threshold_count = std::max(static_cast<int>(n_local / 4), 2);
+        auto buggy_idx = torch::where(valid_sum < threshold_count)[0];
+        if (buggy_idx.numel() > 0)
+        {
+            std::cerr << diffcoal::logging::WARNING << "Found " << buggy_idx.numel()
+                      << " batches (out of " << valid.size(0)
+                      << ") with insufficient local samples." << std::endl;
+
+            if (!_local_sample_warn_once)
+            {
+                std::cerr << diffcoal::logging::WARNING
+                          << "If this appears frequently across meshes, consider "
+                             "increasing `dthre` or `n_global` in the config. "
+                          << "If only for specific meshes with very few batches, those meshes may "
+                             "be problematic (e.g., containing disconnected pieces)."
+                          << std::endl;
+                _local_sample_warn_once = true;
+            }
+
+            auto dist_buggy = dist.index({buggy_idx});
+            auto topk_result = torch::topk(dist.index({buggy_idx}), n_local, -1, /*largest=*/false);
+            auto new_thre = std::get<0>(topk_result).index({Slice(), -1});
+
+            valid.index_put_({buggy_idx}, dist_buggy < new_thre.unsqueeze(-1));
+        }
+
+        auto probs = valid / valid.sum(-1, /*keepdim=*/true);
+        // NOTE: replacement=False may get samples with prob=0
+        auto sampled_idx = torch::multinomial(probs, n_local, /*replacement=*/true);
+        std::vector<int64_t> expand_shape = {sampled_idx.size(0), sampled_idx.size(1), 3};
+        auto sampled_padded = sampled_idx.unsqueeze(-1).expand(expand_shape);
+
+        return global_sample.gather(1, sampled_padded);
     }
 
 } // namespace diffcoal
