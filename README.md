@@ -7,7 +7,7 @@ conda create -n diffcoal python=3.10 -c conda-forge -y
 conda activate diffcoal
 # require the gcc/g++ version is equal to the host compilers
 # this we assume the cuda is compiled with gcc/g++ 11.4
-conda install -c conda-forge coal eigen boost eigenpy numpy gcc_linux-64=11 gxx_linux-64=11 cmake make git pkg-config pytorch=2.4.0 -y
+conda install -c conda-forge coal eigen boost eigenpy numpy gcc_linux-64=11 gxx_linux-64=11 cmake make git pkg-config pytorch=2.4.0 open3d -y
 
 git clone --recursive https://github.com/120090162/Diffcoal.git
 

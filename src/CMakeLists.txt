@@ -15,8 +15,8 @@ if(ENABLE_TEMPLATE_INSTANTIATION)
 endif()
 
 
-target_link_libraries(${PROJECT_NAME}_header_only INTERFACE Eigen3::Eigen coal::coal OpenMP::OpenMP_CXX
-                                                            Boost::boost Boost::serialization)
+target_link_libraries(${PROJECT_NAME}_header_only INTERFACE Eigen3::Eigen coal::coal OpenMP::OpenMP_CXX Open3D::Open3D
+                                                            Boost::boost Boost::serialization ${TORCH_LIBRARIES})
 
 # add precompiled header for eigen headers
 if(USE_PRECOMPILED_HEADERS)

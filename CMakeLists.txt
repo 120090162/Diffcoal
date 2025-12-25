@@ -154,6 +154,9 @@ add_project_dependency(Boost REQUIRED COMPONENTS ${BOOST_REQUIRED_COMPONENTS})
 # -- Torch
 add_project_dependency(Torch REQUIRED)
 
+# -- Open3D
+add_project_dependency(Open3D REQUIRED)
+
 # -- Coal
 add_project_dependency(coal REQUIRED)
 
