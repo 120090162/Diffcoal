@@ -14,6 +14,9 @@ namespace diffcoal
 {
     using namespace torch::indexing;
 
+    // TODO: template by allocator
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     // Utility class to standardize tensor device and dtype conversion.
     struct DCTensorSpec
     {
@@ -384,6 +387,197 @@ namespace diffcoal
         auto sampled_padded = sampled_idx.unsqueeze(-1).expand(expand_shape);
 
         return global_sample.gather(1, sampled_padded);
+    }
+
+    torch::Tensor eigenToTorch(const std::vector<Eigen::Vector3d> & vec)
+    {
+        if (vec.empty())
+            return torch::empty({0, 3});
+
+        auto opts = torch::TensorOptions().dtype(torch::kFloat64);
+        return torch::from_blob(
+                   const_cast<double *>(vec[0].data()), {static_cast<long>(vec.size()), 3}, opts)
+            .to(torch::kFloat32)
+            .clone();
+    }
+
+    std::pair<torch::Tensor, torch::Tensor> globalSampleVOrF(
+        const open3d::geometry::TriangleMesh & coarse_mesh,
+        const open3d::geometry::TriangleMesh & fine_mesh,
+        int n_sample,
+        const std::string & type_sample)
+    {
+        if (type_sample == "v")
+        {
+            int64_t num_vertices = fine_mesh.vertices_.size();
+            auto v_ind = torch::randint(0, num_vertices, {n_sample}, torch::kLong);
+
+            auto all_vertices = eigenToTorch(fine_mesh.vertices_);
+            auto all_normals = eigenToTorch(fine_mesh.vertex_normals_);
+
+            if (all_normals.size(0) == 0)
+            {
+                std::cerr << diffcoal::logging::WARNING << "Fine mesh has no vertex normals!"
+                          << std::endl;
+                // TODO: fineMesh.ComputeVertexNormals();
+            }
+
+            auto p = all_vertices.index_select(0, v_ind);
+            auto n = all_normals.index_select(0, v_ind);
+
+            return {p, n};
+        }
+        else if (type_sample == "f")
+        {
+            // --- Face/Surface Sampling ---
+            auto pcd = coarse_mesh_t.SamplePointsPoissonDisk(n_sample);
+            auto query_points = eigenToTorch(pcd->points_); // (N, 3)
+            auto fine_mesh_T = open3d::t::geometry::TriangleMesh::FromLegacy(fine_mesh);
+
+            open3d::t::geometry::RaycastingScene scene;
+            scene.AddTriangles(fine_mesh_T);
+
+            // 执行最近点查询
+            open3d::core::Tensor query_points_o3d = open3d::core::Tensor::Init(
+                query_points.data_ptr<float>(), {n_sample, 3}, open3d::core::Dtype::Float32);
+            auto ans = scene.ComputeClosestPoint(query_points_o3d);
+
+            // 获取结果
+            // 'points': 投影后的点坐标 (N, 3)
+            // 'primitive_ids': 最近的三角形索引 (N,)
+            auto p_tensor_o3d = ans["points"];
+            auto f_ids_o3d = ans["primitive_ids"];
+
+            // 转回 LibTorch Tensor
+            // Open3D Tensor -> Blob -> LibTorch Tensor (Zero copy if possible, otherwise clone)
+            auto p =
+                torch::from_blob(p_tensor_o3d.GetDataPtr(), {nSample, 3}, torch::kFloat32).clone();
+            auto f_indices = torch::from_blob(f_ids_o3d.GetDataPtr(), {nSample}, torch::kInt64)
+                                 .clone(); // int64 or int32 depending on Open3D version
+
+            // 获取对应的面法线
+            auto all_face_normals = eigenToTorch(fineMesh.triangle_normals_);
+
+            // 确保面法线存在
+            if (all_face_normals.size(0) == 0)
+            {
+                std::cerr << diffcoal::logging::WARNING << "Warning: Fine mesh has no face normals!"
+                          << std::endl;
+                // TODO: fineMesh.ComputeTriangleNormals();
+            }
+
+            auto n = all_face_normals.index_select(0, f_indices.to(torch::kLong));
+
+            return {p, n};
+        }
+        else
+        {
+            throw std::invalid_argument(
+                "Unsupported sample type: " + typeSample
+                + ". Available choices: 'v' or 'f', indicating vertices and faces. ");
+        }
+    }
+
+    std::pair<torch::Tensor, torch::Tensor> globalSampleVAndF(
+        const open3d::geometry::TriangleMesh & coarse_mesh,
+        const open3d::geometry::TriangleMesh & fine_mesh,
+        int n_sample)
+    {
+        auto [vp, vn] = globalSampleVOrF(coarse_mesh, fineMesh, n_sample / 2, "v");
+        auto [sp, sn] = globalSampleVOrF(fine_mesh, fineMesh, n_sample / 2, "f");
+
+        return {torch::cat({vp, sp}, 0), torch::cat({vn, sn}, 0)};
+    }
+
+    /**
+     * Batched shortest distance from points to triangles in 3D.
+     * Also returns the closest points on the triangles.
+     *
+     * Args:
+     *     points: (N, 3) tensor
+     *     triangles: (N, 3, 3) tensor
+     *     eps: small value to avoid division by zero
+     *
+     * Returns:
+     *     std::pair containing:
+     *     - distances: (N,) tensor
+     *     - closest_points: (N, 3) tensor
+     */
+    std::pair<torch::Tensor, torch::Tensor> pointToTriangleDistanceAndClosest(
+        const torch::Tensor & points, const torch::Tensor & triangles, double eps = 1e-20)
+    {
+
+        // 1. Extract vertices (N, 3)
+        auto verts = triangles.unbind(1);
+        auto A = verts[0];
+        auto B = verts[1];
+        auto C = verts[2];
+
+        // 2. Compute edges
+        auto AB = B - A;
+        auto AC = C - A;
+        auto BC = C - B;
+
+        // Vector from A to point
+        auto AP = points - A;
+
+        // 3. Compute barycentric coordinates
+        auto dot00 = (AB * AB).sum(1);
+        auto dot01 = (AB * AC).sum(1);
+        auto dot02 = (AB * AP).sum(1);
+        auto dot11 = (AC * AC).sum(1);
+        auto dot12 = (AC * AP).sum(1);
+
+        auto inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01 + eps);
+        auto u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+        auto v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+
+        // 4. Check if inside triangle
+        auto inside = (u >= 0) & (v >= 0) & (u + v <= 1);
+
+        // 5. Projection onto plane: A + u*AB + v*AC
+        auto proj = A + u.unsqueeze(1) * AB + v.unsqueeze(1) * AC;
+
+        // 6. Closest points on edges
+        // Edge AB
+        auto t_ab = torch::clamp((AP * AB).sum(1) / (dot00 + eps), 0, 1);
+        auto p_ab = A + t_ab.unsqueeze(1) * AB;
+
+        // Edge AC
+        auto t_ac = torch::clamp((AP * AC).sum(1) / (dot11 + eps), 0, 1);
+        auto p_ac = A + t_ac.unsqueeze(1) * AC;
+
+        // Edge BC
+        auto BP = points - B;
+        auto dot_bc = (BC * BC).sum(1);
+        auto t_bc = torch::clamp((BP * BC).sum(1) / (dot_bc + eps), 0, 1);
+        auto p_bc = B + t_bc.unsqueeze(1) * BC;
+
+        // 7. Compute distances
+        auto dist_proj = torch::norm(points - proj, 2, 1);
+        auto dist_ab = torch::norm(points - p_ab, 2, 1);
+        auto dist_ac = torch::norm(points - p_ac, 2, 1);
+        auto dist_bc = torch::norm(points - p_bc, 2, 1);
+
+        // 8. Find minimum distance for outside points
+        auto min_result = torch::min(torch::stack({dist_ab, dist_ac, dist_bc}, 1), 1);
+        auto dist_out = std::get<0>(min_result);
+        auto idx_out = std::get<1>(min_result); // (N,) indices [0, 1, or 2]
+
+        // 9. Pick the corresponding closest point for outside
+        // Stack points to (N, 3, 3)
+        auto stacked_points = torch::stack({p_ab, p_ac, p_bc}, 1);
+        auto batch_indices = torch::arange(points.size(0), idx_out.options());
+        auto closest_out = stacked_points.index({batch_indices, idx_out});
+
+        // 10. Final results
+        // distances: (N,)
+        auto distances = torch::where(inside, dist_proj, dist_out);
+
+        // closest_points: (N, 3)
+        auto closest_points = torch::where(inside.unsqueeze(1), proj, closest_out);
+
+        return {distances, closest_points};
     }
 
 } // namespace diffcoal
