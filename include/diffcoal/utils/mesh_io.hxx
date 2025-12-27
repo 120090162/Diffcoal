@@ -1,15 +1,18 @@
 #ifndef __diffcoal_utils_mesh_io_hxx__
 #define __diffcoal_utils_mesh_io_hxx__
 
+#include <filesystem>
+
 #include "diffcoal/collision/collision.hpp"
 #include "diffcoal/utils/Miniball.hpp"
 
 namespace diffcoal
 {
+    namespace fs = std::filesystem;
     inline DCMesh::DCMesh(
         std::shared_ptr<open3d::geometry::TriangleMesh> coarse,
         std::shared_ptr<open3d::geometry::TriangleMesh> fine,
-        std::vector<std::shared_ptr<coal::CollisionGeometry>> convex_parts,
+        std::vector<std::shared_ptr<const coal::CollisionGeometry>> convex_parts,
         torch::Tensor spheres)
     : coarse_mesh_(std::move(coarse))
     , fine_mesh_(std::move(fine))
@@ -28,17 +31,22 @@ namespace diffcoal
 
         auto [hull_mesh, _] = tm->ComputeConvexHull();
         const auto & hull_points = hull_mesh->vertices_;
-        struct EigenPointAccessor
+
+        typedef std::vector<Eigen::Vector3d>::const_iterator PointIterator;
+        typedef const double * CoordIterator;
+
+        struct EigenAccessor
         {
-            typedef std::vector<Eigen::Vector3d>::const_iterator It;
-            typedef double const * CoordinateIt;
-            CoordinateIt operator()(It it) const
+            typedef PointIterator it;
+            typedef CoordIterator const_ptr;
+            const_ptr operator()(it i) const
             {
-                return it->data();
+                return i->data();
             }
         };
 
-        Miniball::Miniball<EigenPointAccessor> mb(3, hull_points.begin(), hull_points.end());
+        typedef Miniball::Miniball<EigenAccessor> MB;
+        MB mb(3, hull_points.begin(), hull_points.end());
 
         Eigen::Vector3d center = Eigen::Vector3d::Zero();
         const double * mb_center = mb.center();
@@ -52,14 +60,9 @@ namespace diffcoal
         bs_vec << center, radius;
 
         torch::Tensor bs_raw = torch::from_blob(bs_vec.data(), {1, 4}, torch::kFloat64).clone();
-        auto v_opts = torch::TensorOptions().dtype(torch::kFloat64);
-        torch::Tensor v_tensor =
-            torch::from_blob(
-                const_cast<Eigen::Vector3d *>(vertices.data()), {(long)vertices.size(), 3}, v_opts)
-                .to(torch::kFloat32);
 
-        std::vector<std::shared_ptr<coal::CollisionGeometry>> cvx_lst = {
-            getConvexFromData(v_tensor)};
+        std::vector<std::shared_ptr<const coal::CollisionGeometry>> cvx_lst = {
+            getConvexFromData<diffcoal::context::Scalar, diffcoal::context::Options>(vertices)};
         return DCMesh(hull_mesh, hull_mesh, cvx_lst, ts.to(bs_raw));
     }
 
@@ -74,27 +77,10 @@ namespace diffcoal
         {
             std::string simplified_path = (fs::path(obj_path) / "mesh" / "simplified.obj").string();
             TORCH_CHECK(
-                fs::exists(simplified_path),
-                "[DCMesh] Missing simplified.obj for concave mesh at: ", simplified_path);
+                fs::exists(simplified_path), "currently only support meshes processed by "
+                                             "https://github.com/JYChen18/MeshProcess");
             return loadConcaveFromFileInternal(obj_path, scale, ts);
         }
-    }
-
-    inline Eigen::Vector4d
-    DCMesh::computeBoundingSphereInternal(const open3d::geometry::TriangleMesh & mesh)
-    {
-        if (mesh.vertices_.empty())
-            return Eigen::Vector4d::Zero();
-        auto aabb = mesh.GetAxisAlignedBoundingBox();
-        Eigen::Vector3d center = aabb.GetCenter();
-        double max_dist_sq = 0;
-        for (const auto & v : mesh.vertices_)
-        {
-            max_dist_sq = std::max(max_dist_sq, (v - center).squared_norm());
-        }
-        Eigen::Vector4d sphere;
-        sphere << center, std::sqrt(max_dist_sq);
-        return sphere;
     }
 
     inline DCMesh
@@ -105,16 +91,15 @@ namespace diffcoal
                                      : (fs::path(path) / "mesh" / "simplified.obj").string();
 
         auto tm = open3d::io::CreateMeshFromFile(final_path);
-        tm->Scale(scale, tm->GetCenter());
-        auto [hull_mesh, _] = tm->ComputeConvexHull();
+        tm->Scale(scale, Eigen::Vector3d::Zero());
 
-        Eigen::Vector4d sphere = computeBoundingSphereInternal(*hull_mesh);
-        torch::Tensor sphere_lst = torch::from_blob(sphere.data(), {1, 4}, torch::kFloat64).clone();
+        Eigen::Vector4d sphere = computeMinimumSphere(*tm);
+        torch::Tensor bs_raw = torch::from_blob(sphere.data(), {1, 4}, torch::kFloat64).clone();
 
         std::vector<std::shared_ptr<coal::CollisionGeometry>> cvx_lst = {
-            getConvexFromFile(final_path, Eigen::Vector3d::Constant(scale))};
+            getConvexFromFile(final_path, {scale, scale, scale})};
 
-        return DCMesh(hull_mesh, hull_mesh, cvx_lst, ts.to(sphere_lst));
+        return DCMesh(tm, tm, cvx_lst, ts.to(bs_raw));
     }
 
     inline DCMesh
@@ -122,9 +107,6 @@ namespace diffcoal
     {
         std::string tm_path = (fs::path(path) / "mesh" / "simplified.obj").string();
         std::string convex_dir = (fs::path(path) / "urdf" / "meshes").string();
-
-        auto cm = open3d::io::CreateMeshFromFile(tm_path);
-        cm->Scale(scale, cm->GetCenter());
 
         std::vector<std::string> files;
         for (const auto & entry : fs::directory_iterator(convex_dir))
@@ -134,16 +116,20 @@ namespace diffcoal
         }
         std::sort(files.begin(), files.end());
 
+        auto cm = open3d::io::CreateMeshFromFile(tm_path);
+        cm->Scale(scale, Eigen::Vector3d::Zero());
+
         std::vector<Eigen::Vector4d> spheres;
         std::vector<std::shared_ptr<coal::CollisionGeometry>> cvx_lst;
         auto fm = std::make_shared<open3d::geometry::TriangleMesh>();
-
+        std::vector<double> scale_vec = {scale, scale, scale};
+        Eigen::Vector3d zero_vec = Eigen::Vector3d::Zero();
         for (const auto & f : files)
         {
             auto m = open3d::io::CreateMeshFromFile(f);
-            m->Scale(scale, m->GetCenter());
-            spheres.push_back(computeBoundingSphereInternal(*m));
-            cvx_lst.push_back(getConvexFromFile(f, Eigen::Vector3d::Constant(scale)));
+            m->Scale(scale, zero_vec);
+            spheres.push_back(computeMinimumSphere(*m));
+            cvx_lst.push_back(getConvexFromFile(f, scale_vec));
             *fm += *m;
         }
 
@@ -154,6 +140,43 @@ namespace diffcoal
         }
 
         return DCMesh(cm, fm, cvx_lst, ts.to(bs_tensor));
+    }
+
+    inline Eigen::Vector4d DCMesh::computeMinimumSphere(const open3d::geometry::TriangleMesh & mesh)
+    {
+        if (mesh.vertices_.empty())
+            return Eigen::Vector4d::Zero();
+
+        // 1. 计算凸包 (对应 trimesh 源码中的 points = convex.hull_points(obj))
+        // 注意：ComputeConvexHull 返回 std::tuple<mesh, indices>
+        auto [hull_mesh, _] = mesh.ComputeConvexHull();
+        const auto & hull_points = hull_mesh->vertices_;
+
+        // 2. 配置 Miniball 访问器
+        struct EigenAccessor
+        {
+            typedef std::vector<Eigen::Vector3d>::const_iterator it;
+            typedef const double * const_ptr;
+            const_ptr operator()(it i) const
+            {
+                return i->data();
+            }
+        };
+
+        // 3. 计算最小包围球
+        typedef Miniball::Miniball<EigenAccessor> MB;
+        MB mb(3, hull_points.begin(), hull_points.end());
+
+        // 4. 提取中心和半径
+        Eigen::Vector3d center;
+        const double * mb_center = mb.center();
+        for (int i = 0; i < 3; ++i)
+            center[i] = mb_center[i];
+        double radius = std::sqrt(mb.squared_radius());
+
+        Eigen::Vector4d res;
+        res << center, radius;
+        return res;
     }
 } // namespace diffcoal
 

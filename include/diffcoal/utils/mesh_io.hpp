@@ -9,6 +9,7 @@
 #include <Eigen/Dense>
 
 #include "diffcoal/utils/helpers.hpp"
+#include "diffcoal/fwd.hpp"
 
 namespace diffcoal
 {
@@ -32,7 +33,7 @@ namespace diffcoal
         DCMesh(
             std::shared_ptr<open3d::geometry::TriangleMesh> coarse,
             std::shared_ptr<open3d::geometry::TriangleMesh> fine,
-            std::vector<std::shared_ptr<coal::CollisionGeometry>> convex_parts,
+            std::vector<std::shared_ptr<const coal::CollisionGeometry>> convex_parts,
             torch::Tensor spheres);
 
         /**
@@ -95,7 +96,7 @@ namespace diffcoal
         /**
          * @brief Get the list of convex collision pieces.
          */
-        const std::vector<std::shared_ptr<coal::CollisionGeometry>> & getConvexPieces() const
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & getConvexPieces() const
         {
             return convex_pieces_;
         }
@@ -128,7 +129,7 @@ namespace diffcoal
 
         /// @brief List of convex collision geometries (from 'Coal' library), used for the
         /// narrow-phase (GJK/EPA) detection.
-        std::vector<std::shared_ptr<coal::CollisionGeometry>> convex_pieces_;
+        std::vector<std::shared_ptr<const coal::CollisionGeometry>> convex_pieces_;
 
         /// @brief Bounding spheres (center_xyz, radius) for each convex piece, used for broad-phase
         /// culling.
@@ -139,14 +140,6 @@ namespace diffcoal
         int n_cvx_ = 0;
 
         // --- Internal helpers -----------------------------------------------
-
-        /**
-         * @brief Compute a tight bounding sphere (x,y,z,r) for the supplied mesh.
-         *
-         * Used to build broad-phase culling spheres for convex pieces.
-         */
-        static Eigen::Vector4d
-        computeBoundingSphereInternal(const open3d::geometry::TriangleMesh & mesh);
 
         /**
          * @brief Load a convex mesh from file and convert to DCMesh internals.
@@ -163,6 +156,14 @@ namespace diffcoal
          */
         static DCMesh
         loadConcaveFromFileInternal(const std::string & path, double scale, DCTensorSpec & ts);
+
+        /**
+         * @brief Compute the minimum bounding sphere for a given mesh.
+         *
+         * @param mesh The input TriangleMesh.
+         * @return Eigen::Vector4d The bounding sphere (center_x, center_y, center_z, radius).
+         */
+        static Eigen::Vector4d computeMinimumSphere(const open3d::geometry::TriangleMesh & mesh);
     };
 } // namespace diffcoal
 

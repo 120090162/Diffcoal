@@ -43,16 +43,16 @@ namespace diffcoal
     // passed to COAL to construct the convex hull.
     template<typename Scalar, int Options>
     inline std::shared_ptr<const coal::CollisionGeometry>
-    getConvexFromData(const std::vector<Scalar> & verts)
+    getConvexFromData(const std::vector<diffcoal::context::Vector3s> & vertices)
     {
         typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 3, Eigen::RowMajor> MatrixX3;
 
-        size_t n_rows = verts.size() / 3;
-
-        Eigen::Map<const MatrixX3> eigen_verts(verts.data(), n_rows, 3);
+        Eigen::Map<const MatrixX3> matrix_map(
+            reinterpret_cast<const double *>(vertices.data()),
+            static_cast<Eigen::Index>(vertices.size()), 3);
         auto bvh = std::make_shared<coal::BVHModel<coal::AABB>>();
         bvh->beginModel();
-        bvh->addVertices(eigen_verts);
+        bvh->addVertices(matrix_map);
         bvh->endModel();
         bvh->buildConvexHull(true, "Qt");
         return bvh->convex;

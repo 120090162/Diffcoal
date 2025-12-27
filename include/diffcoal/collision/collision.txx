@@ -6,13 +6,16 @@
 namespace diffcoal
 {
     extern template std::shared_ptr<const coal::CollisionGeometry>
-    getConvexFromFile<context::Scalar, context::Options>(const std::string & file_name, const std::vector<context::Scalar> & scale);
+    getConvexFromFile<context::Scalar, context::Options>(
+        const std::string & file_name, const std::vector<context::Scalar> & scale);
 
     extern template std::shared_ptr<const coal::CollisionGeometry>
-    getConvexFromData<context::Scalar, context::Options>(const std::vector<context::Scalar> & verts);
+    getConvexFromData<context::Scalar, context::Options>(
+        const std::vector<context::Vector3s> & vertices);
 
     extern template void batchedCoalDistance<context::Scalar, context::Options>(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // Use CollisionGeometry here
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // Use CollisionGeometry here
         const std::vector<size_t> & shape1_idx_lst,
         const std::vector<context::Scalar> & pose1_lst,
         const std::vector<size_t> & shape2_idx_lst,
@@ -31,7 +34,8 @@ namespace diffcoal
         std::vector<size_t> & min_idx_result);
 
     extern template void batchedGetNeighbor<context::Scalar, context::Options>(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // pass by const ref
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // pass by const ref
         const std::vector<size_t> & valid_idx_lst,
         const std::vector<context::Scalar> & sep_vec_lst, // assumed shape (n_valid, 3)
         const size_t n_valid,

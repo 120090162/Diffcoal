@@ -40,7 +40,7 @@ namespace diffcoal
     ///
     template<typename Scalar, int Options>
     std::shared_ptr<const coal::CollisionGeometry>
-    getConvexFromData(const std::vector<Scalar> & verts);
+    getConvexFromData(const std::vector<diffcoal::context::Vector3s> & vertices);
 
     /// \brief Compute batched distances between many convex/mesh pairs in parallel.
     ///
