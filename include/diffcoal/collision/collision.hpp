@@ -6,8 +6,6 @@
 #include <Eigen/Dense>
 
 #include <memory>
-#include <iostream>
-#include <random>
 #include <vector>
 
 #include "diffcoal/collision/fwd.hpp"
@@ -26,7 +24,8 @@ namespace diffcoal
     /// \returns Shared pointer to the constructed convex CollisionGeometry.
     ///
     template<typename Scalar, int Options>
-    std::shared_ptr<const coal::CollisionGeometry> getConvexFromFile(const std::string & file_name, const std::vector<Scalar> & scale);
+    std::shared_ptr<const coal::CollisionGeometry>
+    getConvexFromFile(const std::string & file_name, const std::vector<Scalar> & scale);
 
     /// \brief Build a convex collision geometry from raw vertex data.
     ///
@@ -40,7 +39,8 @@ namespace diffcoal
     /// \returns Shared pointer to the constructed convex CollisionGeometry.
     ///
     template<typename Scalar, int Options>
-    std::shared_ptr<const coal::CollisionGeometry> getConvexFromData(const std::vector<Scalar> & verts);
+    std::shared_ptr<const coal::CollisionGeometry>
+    getConvexFromData(const std::vector<Scalar> & verts);
 
     /// \brief Compute batched distances between many convex/mesh pairs in parallel.
     ///
@@ -67,12 +67,14 @@ namespace diffcoal
     /// \param normal_result Output vector (size total_groups*3) to receive normals.
     /// \param wp1_result Output vector (size total_groups*3) to receive nearest point on shape1.
     /// \param wp2_result Output vector (size total_groups*3) to receive nearest point on shape2.
-    /// \param min_idx_result Output vector (size total_groups) to receive index of best convex pair.
+    /// \param min_idx_result Output vector (size total_groups) to receive index of best convex
+    /// pair.
     /// \returns void (results are written into output parameters).
     ///
     template<typename Scalar, int Options>
     void batchedCoalDistance(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // Use CollisionGeometry here
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // Use CollisionGeometry here
         const std::vector<size_t> & shape1_idx_lst,
         const std::vector<Scalar> & pose1_lst,
         const std::vector<size_t> & shape2_idx_lst,
@@ -110,7 +112,8 @@ namespace diffcoal
     ///
     template<typename Scalar, int Options>
     void batchedGetNeighbor(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // pass by const ref
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // pass by const ref
         const std::vector<size_t> & valid_idx_lst,
         const std::vector<Scalar> & sep_vec_lst, // assumed shape (n_valid, 3)
         const size_t n_valid,

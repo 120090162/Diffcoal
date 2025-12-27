@@ -14,12 +14,11 @@ namespace diffcoal
 {
     using namespace torch::indexing;
 
-    // TODO: template by allocator
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
     // Utility class to standardize tensor device and dtype conversion.
     struct DCTensorSpec
     {
+        // TODO: template by allocator
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     public:
         torch::Device device = torch::kCPU;
         torch::Dtype dtype = torch::kFloat32;

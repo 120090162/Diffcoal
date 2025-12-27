@@ -1,7 +1,6 @@
 #ifndef __diffcoal_collision_collision_hxx__
 #define __diffcoal_collision_collision_hxx__
 
-#include <coal/collision_object.h>
 #include <coal/distance.h>
 #include <coal/shape/convex.h>
 #include <coal/shape/geometric_shapes.h>
@@ -43,7 +42,8 @@ namespace diffcoal
     // mapped into an Eigen matrix with shape (n_rows x 3) before being
     // passed to COAL to construct the convex hull.
     template<typename Scalar, int Options>
-    inline std::shared_ptr<const coal::CollisionGeometry> getConvexFromData(const std::vector<Scalar> & verts)
+    inline std::shared_ptr<const coal::CollisionGeometry>
+    getConvexFromData(const std::vector<Scalar> & verts)
     {
         typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 3, Eigen::RowMajor> MatrixX3;
 
@@ -61,7 +61,8 @@ namespace diffcoal
     // --------------------------------------------------------------------------
     template<typename Scalar, int Options>
     inline void batchedCoalDistance(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // Use CollisionGeometry here
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // Use CollisionGeometry here
         const std::vector<size_t> & shape1_idx_lst,
         const std::vector<Scalar> & pose1_lst,
         const std::vector<size_t> & shape2_idx_lst,
@@ -135,25 +136,33 @@ namespace diffcoal
 
                 // Build transforms
                 Matrix3 R1;
-                R1 << pose1_ptr[16 * group_idx], pose1_ptr[16 * group_idx + 1], pose1_ptr[16 * group_idx + 2],
-                    pose1_ptr[16 * group_idx + 4], pose1_ptr[16 * group_idx + 5], pose1_ptr[16 * group_idx + 6],
-                    pose1_ptr[16 * group_idx + 8], pose1_ptr[16 * group_idx + 9], pose1_ptr[16 * group_idx + 10];
-                Vector3 T1(pose1_ptr[16 * group_idx + 3], pose1_ptr[16 * group_idx + 7], pose1_ptr[16 * group_idx + 11]);
+                R1 << pose1_ptr[16 * group_idx], pose1_ptr[16 * group_idx + 1],
+                    pose1_ptr[16 * group_idx + 2], pose1_ptr[16 * group_idx + 4],
+                    pose1_ptr[16 * group_idx + 5], pose1_ptr[16 * group_idx + 6],
+                    pose1_ptr[16 * group_idx + 8], pose1_ptr[16 * group_idx + 9],
+                    pose1_ptr[16 * group_idx + 10];
+                Vector3 T1(
+                    pose1_ptr[16 * group_idx + 3], pose1_ptr[16 * group_idx + 7],
+                    pose1_ptr[16 * group_idx + 11]);
                 coal::Transform3s transform1(R1, T1);
 
                 Matrix3 R2;
-                R2 << pose2_ptr[16 * group_idx], pose2_ptr[16 * group_idx + 1], pose2_ptr[16 * group_idx + 2],
-                    pose2_ptr[16 * group_idx + 4], pose2_ptr[16 * group_idx + 5], pose2_ptr[16 * group_idx + 6],
-                    pose2_ptr[16 * group_idx + 8], pose2_ptr[16 * group_idx + 9], pose2_ptr[16 * group_idx + 10];
-                Vector3 T2(pose2_ptr[16 * group_idx + 3], pose2_ptr[16 * group_idx + 7], pose2_ptr[16 * group_idx + 11]);
+                R2 << pose2_ptr[16 * group_idx], pose2_ptr[16 * group_idx + 1],
+                    pose2_ptr[16 * group_idx + 2], pose2_ptr[16 * group_idx + 4],
+                    pose2_ptr[16 * group_idx + 5], pose2_ptr[16 * group_idx + 6],
+                    pose2_ptr[16 * group_idx + 8], pose2_ptr[16 * group_idx + 9],
+                    pose2_ptr[16 * group_idx + 10];
+                Vector3 T2(
+                    pose2_ptr[16 * group_idx + 3], pose2_ptr[16 * group_idx + 7],
+                    pose2_ptr[16 * group_idx + 11]);
                 coal::Transform3s transform2(R2, T2);
 
                 // Call COAL distance (CPU)
                 coal::DistanceRequest dist_req;
                 coal::DistanceResult dist_res;
                 coal::distance(
-                    shape_lst[shape1_idx_ptr[pair_idx]].get(), transform1, shape_lst[shape2_idx_ptr[pair_idx]].get(), transform2, dist_req,
-                    dist_res);
+                    shape_lst[shape1_idx_ptr[pair_idx]].get(), transform1,
+                    shape_lst[shape2_idx_ptr[pair_idx]].get(), transform2, dist_req, dist_res);
 
                 // Update thread-local best
                 if (dist_res.min_distance < my_local_res[group_idx].min_distance)
@@ -197,7 +206,8 @@ namespace diffcoal
     // --------------------------------------------------------------------------
     template<typename Scalar, int Options>
     inline void batchedGetNeighbor(
-        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> & shape_lst, // pass by const ref
+        const std::vector<std::shared_ptr<const coal::CollisionGeometry>> &
+            shape_lst, // pass by const ref
         const std::vector<size_t> & valid_idx_lst,
         const std::vector<Scalar> & sep_vec_lst, // assumed shape (n_valid, 3)
         const size_t n_valid,
@@ -219,7 +229,8 @@ namespace diffcoal
         {
             const size_t sel_idx = select_idx_ptr[i];
             const std::shared_ptr<const coal::CollisionGeometry> & geom_ptr = shape_lst[sel_idx];
-            const coal::ConvexBase * convex_base = dynamic_cast<const coal::ConvexBase *>(geom_ptr.get());
+            const coal::ConvexBase * convex_base =
+                dynamic_cast<const coal::ConvexBase *>(geom_ptr.get());
 
             Vector3 sep_vec;
             sep_vec(0) = sep_vec_ptr[3 * i + 0];
@@ -259,7 +270,8 @@ namespace diffcoal
                     for (size_t jj = 0; jj < cnt; ++jj)
                     {
                         size_t neighbor_index = point_neighbors[static_cast<int>(jj)];
-                        auto it = std::find(neighbor_lst.begin(), neighbor_lst.end(), neighbor_index);
+                        auto it =
+                            std::find(neighbor_lst.begin(), neighbor_lst.end(), neighbor_index);
                         if (it == neighbor_lst.end())
                         {
                             level_lst.push_back(curr_level + 1);
@@ -270,7 +282,8 @@ namespace diffcoal
                 ++curr_idx;
             }
 
-            // per-iteration random generator (seed depends on i to avoid identical shuffles across threads)
+            // per-iteration random generator (seed depends on i to avoid identical shuffles across
+            // threads)
             std::mt19937 gen(static_cast<size_t>(i + 123456));
             std::shuffle(neighbor_lst.begin(), neighbor_lst.end(), gen);
 
