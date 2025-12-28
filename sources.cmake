@@ -7,6 +7,7 @@ set(${PROJECT_NAME}_CORE_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/diffcoal/collision/collision.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/collision/collision.hxx
     ${PROJECT_SOURCE_DIR}/include/diffcoal/collision/fwd.hpp
+    ${PROJECT_SOURCE_DIR}/include/diffcoal/core/base.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/core/fwd.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/fwd.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/helpers.hpp

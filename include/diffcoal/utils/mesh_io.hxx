@@ -61,7 +61,7 @@ namespace diffcoal
         torch::Tensor bs_raw = torch::from_blob(bs_vec.data(), {1, 4}, torch::kFloat64).clone();
 
         std::vector<std::shared_ptr<const coal::CollisionGeometry>> cvx_lst = {
-            getConvexFromData<diffcoal::context::Scalar, diffcoal::context::Options>(vertices)};
+            getConvexFromData<context::Scalar, diffcoal::context::Options>(vertices)};
         return DCMesh(hull_mesh, hull_mesh, cvx_lst, ts.to(bs_raw));
     }
 
@@ -99,7 +99,8 @@ namespace diffcoal
         torch::Tensor bs_raw = torch::from_blob(sphere.data(), {1, 4}, torch::kFloat64).clone();
 
         std::vector<std::shared_ptr<coal::CollisionGeometry>> cvx_lst = {
-            getConvexFromFile(final_path, {scale, scale, scale})};
+            getConvexFromFile<context::Scalar, context::Options>(
+                final_path, {scale, scale, scale})};
 
         return DCMesh(tm, tm, cvx_lst, ts.to(bs_raw));
     }
@@ -131,7 +132,7 @@ namespace diffcoal
             auto m = open3d::io::CreateMeshFromFile(f);
             m->Scale(scale, zero_vec);
             spheres.push_back(computeMinimumSphere(*m));
-            cvx_lst.push_back(getConvexFromFile(f, scale_vec));
+            cvx_lst.push_back(getConvexFromFile<context::Scalar, context::Options>(f, scale_vec));
             *fm += *m;
         }
 
