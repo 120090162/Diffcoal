@@ -9,7 +9,7 @@
 #include <Eigen/Dense>
 
 #include "diffcoal/utils/helpers.hpp"
-#include "diffcoal/fwd.hpp"
+#include "diffcoal/utils/fwd.hpp"
 
 namespace diffcoal
 {

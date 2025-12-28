@@ -8,12 +8,14 @@ set(${PROJECT_NAME}_CORE_PUBLIC_HEADERS
     ${PROJECT_SOURCE_DIR}/include/diffcoal/collision/collision.hxx
     ${PROJECT_SOURCE_DIR}/include/diffcoal/collision/fwd.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/core/fwd.hpp
+    ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/fwd.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/helpers.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/logger.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/mesh_io.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/mesh_io.hxx
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/Miniball.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/openmp.hpp
+    ${PROJECT_SOURCE_DIR}/include/diffcoal/utils/rotation_util.hpp
     ${PROJECT_SOURCE_DIR}/include/diffcoal/fwd.hpp)
 
 set(_binary_headers_root ${${PROJECT_NAME}_BINARY_DIR}/include/diffcoal)

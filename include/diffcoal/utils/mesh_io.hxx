@@ -8,7 +8,6 @@
 
 namespace diffcoal
 {
-    namespace fs = std::filesystem;
     inline DCMesh::DCMesh(
         std::shared_ptr<open3d::geometry::TriangleMesh> coarse,
         std::shared_ptr<open3d::geometry::TriangleMesh> fine,
@@ -75,10 +74,12 @@ namespace diffcoal
         }
         else
         {
-            std::string simplified_path = (fs::path(obj_path) / "mesh" / "simplified.obj").string();
+            std::string simplified_path =
+                (std::filesystem::path(obj_path) / "mesh" / "simplified.obj").string();
             TORCH_CHECK(
-                fs::exists(simplified_path), "currently only support meshes processed by "
-                                             "https://github.com/JYChen18/MeshProcess");
+                std::filesystem::exists(simplified_path),
+                "currently only support meshes processed by "
+                "https://github.com/JYChen18/MeshProcess");
             return loadConcaveFromFileInternal(obj_path, scale, ts);
         }
     }
@@ -86,9 +87,10 @@ namespace diffcoal
     inline DCMesh
     DCMesh::loadConvexFromFileInternal(const std::string & path, double scale, DCTensorSpec & ts)
     {
-        std::string final_path = fs::is_regular_file(path)
-                                     ? path
-                                     : (fs::path(path) / "mesh" / "simplified.obj").string();
+        std::string final_path =
+            std::filesystem::is_regular_file(path)
+                ? path
+                : (std::filesystem::path(path) / "mesh" / "simplified.obj").string();
 
         auto tm = open3d::io::CreateMeshFromFile(final_path);
         tm->Scale(scale, Eigen::Vector3d::Zero());
@@ -105,11 +107,11 @@ namespace diffcoal
     inline DCMesh
     DCMesh::loadConcaveFromFileInternal(const std::string & path, double scale, DCTensorSpec & ts)
     {
-        std::string tm_path = (fs::path(path) / "mesh" / "simplified.obj").string();
-        std::string convex_dir = (fs::path(path) / "urdf" / "meshes").string();
+        std::string tm_path = (std::filesystem::path(path) / "mesh" / "simplified.obj").string();
+        std::string convex_dir = (std::filesystem::path(path) / "urdf" / "meshes").string();
 
         std::vector<std::string> files;
-        for (const auto & entry : fs::directory_iterator(convex_dir))
+        for (const auto & entry : std::filesystem::directory_iterator(convex_dir))
         {
             if (entry.is_regular_file())
                 files.push_back(entry.path().string());

@@ -450,10 +450,8 @@ namespace diffcoal
             scene.AddTriangles(fine_mesh_T);
 
             // 执行最近点查询
-            open3d::core::Tensor query_points_o3d = open3d::core::Tensor::Init(
-                query_points.data_ptr<float>(), {n_sample, 3}, open3d::core::Dtype::Float32);
-            core::Tensor(
-                std::vector<float>(3 * p1.size()), {static_cast<long>(p1.size()), 3},
+            open3d::core::Tensor query_points_o3d(
+                query_points.data_ptr<float>(), {static_cast<long>(sampled_points.size()), 3},
                 open3d::core::Dtype::Float32);
 
             auto ans = scene.ComputeClosestPoints(query_points_o3d);
@@ -495,8 +493,8 @@ namespace diffcoal
     }
 
     std::pair<torch::Tensor, torch::Tensor> globalSampleVAndF(
-        const open3d::geometry::TriangleMesh & coarse_mesh,
-        const open3d::geometry::TriangleMesh & fine_mesh,
+        open3d::geometry::TriangleMesh & coarse_mesh,
+        open3d::geometry::TriangleMesh & fine_mesh,
         int n_sample)
     {
         auto [vp, vn] = globalSampleVOrF(coarse_mesh, fine_mesh, n_sample / 2, "v");
@@ -596,40 +594,72 @@ namespace diffcoal
         return {distances, closest_points};
     }
 
+    /**
+     * @brief Compute distances between pairs of spheres
+     *
+     * @param T1 (Batch..., n_T, 4, 4) Transform matrices for rigid bodies (set 1)
+     * @param T2 (Batch..., n_T, 4, 4) Transform matrices for rigid bodies (set 2)
+     * @param sph1 (n_sph, 4) Local parameters for spheres in set 1: [x, y, z, r]
+     * @param sph2 (n_sph, 4) Local parameters for spheres in set 2: [x, y, z, r]
+     * @param T2s_idx1 (n_sph,) Indices mapping each sphere to a transform in `T1`
+     * @param T2s_idx2 (n_sph,) Indices mapping each sphere to a transform in `T2`
+     * @return std::pair<torch::Tensor, torch::Tensor> {dist_center, dist_surface}
+     */
     std::pair<torch::Tensor, torch::Tensor> sphereDistForward(
         const torch::Tensor & T1,
         const torch::Tensor & T2,
         const torch::Tensor & sph1,
         const torch::Tensor & sph2,
-        const torch::Tensor & idx1,
-        const torch::Tensor & idx2)
+        const torch::Tensor & T2s_idx1,
+        const torch::Tensor & T2s_idx2)
     {
-        // 1. Index Select (选取矩阵)
-        // dim -3 对应倒数第三维
-        int64_t dim = T1.dim() - 3;
-        auto T1_sel = T1.index_select(dim, idx1);
-        auto T2_sel = T2.index_select(dim, idx2);
+        auto idx1 = T2s_idx1.view({-1}).to(torch::kLong);
+        auto idx2 = T2s_idx2.view({-1}).to(torch::kLong);
+        // 1. Index select transforms for each sphere
+        auto T1_sel = torch::index_select(T1, -3, idx1);
+        auto T2_sel = torch::index_select(T2, -3, idx2);
 
-        // 2. 准备齐次坐标
-        // Slice(None, 3) 取前三列
-        auto c1 = sph1.index({"...", Slice(None, 3)});
-        auto ones = torch::ones({c1.size(0), 1}, c1.options());
+        // 2. Prepare sphere data
+        // reshape(-1, 4) flattens to extract (x, y, z) and r
+        auto s1_vec = sph1.reshape({-1, 4});
+        auto s2_vec = sph2.reshape({-1, 4});
 
-        // cat & unsqueeze
-        auto p1_h = torch::cat({c1, ones}, -1).unsqueeze(-1); // (n_sph, 4, 1)
-        auto p2_h = torch::cat({sph2.index({"...", Slice(None, 3)}), ones}, -1).unsqueeze(-1);
+        // slice(dim, start, end, step)
+        // extract local coordinates p (n_sph, 3)
+        auto p1_local = s1_vec.slice(1, 0, 3);
+        auto p2_local = s2_vec.slice(1, 0, 3);
 
-        // 3. Matmul (自动广播)
-        auto p1_trans = torch::matmul(T1_sel, p1_h).squeeze(-1).index({"...", Slice(None, 3)});
-        auto p2_trans = torch::matmul(T2_sel, p2_h).squeeze(-1).index({"...", Slice(None, 3)});
+        // extract radius r (n_sph)
+        // note: select(dim, index) reduces the dimension
+        auto r1 = s1_vec.select(1, 3);
+        auto r2 = s2_vec.select(1, 3);
 
-        // 4. Norm
-        auto dist = torch::norm(p1_trans - p2_trans, 2, -1);
+        // 3. Coordinate transformation
+        // Formula: P_world = R * P_local + t
 
-        // 5. Result
-        auto r1 = sph1.index({"...", 3});
-        auto r2 = sph2.index({"...", 3});
+        // extract rotation matrix R (Batch..., n_sph, 3, 3)
+        // slicing dims: (..., 4, 4) -> (..., 3, 3)
+        auto R1 = T1_sel.slice(-1, 0, 3).slice(-2, 0, 3);
+        auto R2 = T2_sel.slice(-1, 0, 3).slice(-2, 0, 3);
 
+        // extract translation vector t (Batch..., n_sph, 3)
+        // first take 4th column (..., 4, 1) -> slice first 3 rows (..., 3, 1) -> squeeze(-1) ->
+        // (..., 3) Note: Python's T1[..., :3, 3] auto-squeezes, C++ slice does not, so we need to
+        // squeeze. To ease broadcasting for addition, we extract as (Batch..., n_sph, 3) to match
+        // matmul's squeezed result.
+        auto t1 = T1_sel.slice(-1, 3, 4).slice(-2, 0, 3).squeeze(-1);
+        auto t2 = T2_sel.slice(-1, 3, 4).slice(-2, 0, 3).squeeze(-1);
+
+        // perform matrix multiplication
+        // p1_local: (n_sph, 3) -> unsqueeze -> (n_sph, 3, 1) for broadcast matmul
+        // torch::matmul automatically broadcasts batch dimensions
+        auto p1_world = torch::matmul(R1, p1_local.unsqueeze(-1)).squeeze(-1) + t1;
+        auto p2_world = torch::matmul(R2, p2_local.unsqueeze(-1)).squeeze(-1) + t2;
+
+        // 4. Compute pairwise Euclidean distance between sphere centers
+        auto dist = torch::norm(p1_world - p2_world, 2, -1);
+
+        // 5. Return distances: center-to-center and surface-to-surface
         return {dist, dist - r1 - r2};
     }
 
