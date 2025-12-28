@@ -579,6 +579,43 @@ namespace diffcoal
         return {distances, closest_points};
     }
 
+    std::pair<torch::Tensor, torch::Tensor> sphereDistForward(
+        const torch::Tensor & T1,
+        const torch::Tensor & T2,
+        const torch::Tensor & sph1,
+        const torch::Tensor & sph2,
+        const torch::Tensor & idx1,
+        const torch::Tensor & idx2)
+    {
+        // 1. Index Select (选取矩阵)
+        // dim -3 对应倒数第三维
+        int64_t dim = T1.dim() - 3;
+        auto T1_sel = T1.index_select(dim, idx1);
+        auto T2_sel = T2.index_select(dim, idx2);
+
+        // 2. 准备齐次坐标
+        // Slice(None, 3) 取前三列
+        auto c1 = sph1.index({"...", Slice(None, 3)});
+        auto ones = torch::ones({c1.size(0), 1}, c1.options());
+
+        // cat & unsqueeze
+        auto p1_h = torch::cat({c1, ones}, -1).unsqueeze(-1); // (n_sph, 4, 1)
+        auto p2_h = torch::cat({sph2.index({"...", Slice(None, 3)}), ones}, -1).unsqueeze(-1);
+
+        // 3. Matmul (自动广播)
+        auto p1_trans = torch::matmul(T1_sel, p1_h).squeeze(-1).index({"...", Slice(None, 3)});
+        auto p2_trans = torch::matmul(T2_sel, p2_h).squeeze(-1).index({"...", Slice(None, 3)});
+
+        // 4. Norm
+        auto dist = torch::norm(p1_trans - p2_trans, 2, -1);
+
+        // 5. Result
+        auto r1 = sph1.index({"...", 3});
+        auto r2 = sph2.index({"...", 3});
+
+        return {dist, dist - r1 - r2};
+    }
+
 } // namespace diffcoal
 
 #endif // __diffcoal_utils_helpers_hpp__
