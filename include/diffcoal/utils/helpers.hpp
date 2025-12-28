@@ -3,6 +3,8 @@
 
 #include <torch/torch.h>
 #include <open3d/Open3D.h>
+#include <open3d/geometry/TriangleMesh.h>
+#include <open3d/t/geometry/RaycastingScene.h>
 #include <vector>
 #include <iostream>
 #include <cmath>
@@ -401,8 +403,8 @@ namespace diffcoal
     }
 
     std::pair<torch::Tensor, torch::Tensor> globalSampleVOrF(
-        const open3d::geometry::TriangleMesh & coarse_mesh,
-        const open3d::geometry::TriangleMesh & fine_mesh,
+        open3d::geometry::TriangleMesh & coarse_mesh,
+        open3d::geometry::TriangleMesh & fine_mesh,
         int n_sample,
         const std::string & type_sample)
     {
@@ -429,8 +431,19 @@ namespace diffcoal
         else if (type_sample == "f")
         {
             // --- Face/Surface Sampling ---
-            auto pcd = coarse_mesh_t.SamplePointsPoissonDisk(n_sample);
-            auto query_points = eigenToTorch(pcd->points_); // (N, 3)
+            auto pcd = coarse_mesh.SamplePointsPoissonDisk(n_sample);
+
+            std::vector<Eigen::Vector3d> sampled_points = pcd->points_;
+            int n_remain = n_sample - static_cast<int>(sampled_points.size());
+
+            if (n_remain > 0)
+            {
+                auto pcd_remain = coarse_mesh.SamplePointsUniformly(n_remain);
+                sampled_points.insert(
+                    sampled_points.end(), pcd_remain->points_.begin(), pcd_remain->points_.end());
+            }
+
+            auto query_points = eigenToTorch(sampled_points); // (N, 3)
             auto fine_mesh_T = open3d::t::geometry::TriangleMesh::FromLegacy(fine_mesh);
 
             open3d::t::geometry::RaycastingScene scene;
@@ -439,7 +452,11 @@ namespace diffcoal
             // 执行最近点查询
             open3d::core::Tensor query_points_o3d = open3d::core::Tensor::Init(
                 query_points.data_ptr<float>(), {n_sample, 3}, open3d::core::Dtype::Float32);
-            auto ans = scene.ComputeClosestPoint(query_points_o3d);
+            core::Tensor(
+                std::vector<float>(3 * p1.size()), {static_cast<long>(p1.size()), 3},
+                open3d::core::Dtype::Float32);
+
+            auto ans = scene.ComputeClosestPoints(query_points_o3d);
 
             // 获取结果
             // 'points': 投影后的点坐标 (N, 3)
@@ -450,12 +467,12 @@ namespace diffcoal
             // 转回 LibTorch Tensor
             // Open3D Tensor -> Blob -> LibTorch Tensor (Zero copy if possible, otherwise clone)
             auto p =
-                torch::from_blob(p_tensor_o3d.GetDataPtr(), {nSample, 3}, torch::kFloat32).clone();
-            auto f_indices = torch::from_blob(f_ids_o3d.GetDataPtr(), {nSample}, torch::kInt64)
+                torch::from_blob(p_tensor_o3d.GetDataPtr(), {n_sample, 3}, torch::kFloat32).clone();
+            auto f_indices = torch::from_blob(f_ids_o3d.GetDataPtr(), {n_sample}, torch::kInt64)
                                  .clone(); // int64 or int32 depending on Open3D version
 
             // 获取对应的面法线
-            auto all_face_normals = eigenToTorch(fineMesh.triangle_normals_);
+            auto all_face_normals = eigenToTorch(fine_mesh.triangle_normals_);
 
             // 确保面法线存在
             if (all_face_normals.size(0) == 0)
@@ -472,7 +489,7 @@ namespace diffcoal
         else
         {
             throw std::invalid_argument(
-                "Unsupported sample type: " + typeSample
+                "Unsupported sample type: " + type_sample
                 + ". Available choices: 'v' or 'f', indicating vertices and faces. ");
         }
     }
@@ -482,8 +499,8 @@ namespace diffcoal
         const open3d::geometry::TriangleMesh & fine_mesh,
         int n_sample)
     {
-        auto [vp, vn] = globalSampleVOrF(coarse_mesh, fineMesh, n_sample / 2, "v");
-        auto [sp, sn] = globalSampleVOrF(fine_mesh, fineMesh, n_sample / 2, "f");
+        auto [vp, vn] = globalSampleVOrF(coarse_mesh, fine_mesh, n_sample / 2, "v");
+        auto [sp, sn] = globalSampleVOrF(fine_mesh, fine_mesh, n_sample / 2, "f");
 
         return {torch::cat({vp, sp}, 0), torch::cat({vn, sn}, 0)};
     }
